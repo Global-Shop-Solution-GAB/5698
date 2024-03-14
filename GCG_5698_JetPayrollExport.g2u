@@ -1,0 +1,108 @@
+Program.Sub.Main.Start
+'	Author: Daniel Duncan
+'	Customer: Precise Graphix
+'	Program Name: Jet Payroll Export
+'	Date Started: 10/3/19
+'	Description: Exports payroll labor hours to a .csv file in the format needed for Jet Payroll
+'	Quote: 11735-0
+'	GAP: 5698
+
+	f.Intrinsic.Control.Try
+		f.Intrinsic.Control.If(v.Caller.Hook,=,15290)
+			f.Intrinsic.Control.CallSub(CreateFile)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.CreateFile.Start
+	f.Intrinsic.Control.Try
+		v.Local.sSQL.Declare(string)
+		v.Local.sDate.Declare(string)
+		v.Local.sTime.Declare(string)
+		v.Local.iCnt.Declare(long)
+		v.Local.bExcel.Declare(boolean)
+		v.Local.sFileName.Declare(string)
+		v.Local.sInitFileName.Declare(string)
+		v.Local.sTargetFileName.Declare(string)
+		V.Local.bExists.Declare(boolean)
+		v.Local.iRowNum.Declare(long,2)
+		v.Local.sOutput.Declare(string)
+		
+		f.Intrinsic.UI.InvokeWaitDialog("Exporting payroll to Excel...")
+		
+		f.Automation.MSExcel.CheckPresence(v.Local.bExcel)
+		
+		f.Intrinsic.String.DateString(v.Ambient.Date,v.Local.sDate)
+		f.Intrinsic.String.TimeString(v.Ambient.Time,v.Local.sTime)
+		
+		'File and folder maintenance for this specific project
+		F.Intrinsic.String.Build("{0}\CUSTOM\5698",V.Caller.GlobalDir,V.Local.sFileName)
+		F.Intrinsic.File.DirExists(V.Local.sFileName,v.Local.bExists)
+		f.Intrinsic.Control.If(v.Local.bExists,=,false)
+			f.Intrinsic.File.CreateDir(v.Local.sFileName)
+		f.Intrinsic.Control.EndIf
+		f.Intrinsic.String.Build("{0}\GCG_5698_Template.xlsx",v.Caller.DocDir,v.Local.sInitFileName)
+		f.Intrinsic.String.Build("{0}\GCG_5698_Template.xlsx",v.Local.sFileName,v.Local.sFileName)
+		'F.Intrinsic.UI.ShowSaveFileDialog("",".csv","\\VM-DC\Human Resources\HR Admin\Global Shop Payroll Import Files",v.Local.sTargetFileName)
+		f.Intrinsic.String.Build("\\VM-DC\PreciseData\Human Resources\HR Admin\Global Shop Payroll Import Files\GCG_5698_PayrollExport{1}{2}.csv",v.Local.sFileName,v.Local.sDate,v.Local.sTime,v.Local.sTargetFileName)
+		f.Intrinsic.File.Exists(v.Local.sInitFileName,v.Local.bExists)
+		f.Intrinsic.Control.If(v.Local.bExists)
+			f.Intrinsic.File.CopyOpenFile(v.Local.sInitFileName,v.Local.sFileName)
+			f.Intrinsic.File.DeleteFile(v.Local.sInitFileName)
+		f.Intrinsic.Control.EndIf
+		
+		'Customer is storing one or more employee records in employee master for each physical employee: the master record with all of the person's information, and others for differing pay rates, such as travel.  For these pseudorecords, the employee's GSS emp ID is stored in Alpha Sort, and the labor type is stored in Comments 3.
+		'Edit (DD - 10/23/19) - Customer asked for pay type EC (Paid time off) to be removed from the export, as they are tracking this in Jet.
+		f.Intrinsic.String.Build("select distinct '11537' as LegalID, 'Weekly' as PayFreq, a.employee, a.TYPE, '' as JetEC, b.name, b.comments_3, case when b.alpha_sort<>'' then b.alpha_sort else a.employee end as EmpKey, a.hours, case when b.alpha_sort<>'' then b.rate else '' end as Override from pyrl_labor_xfer a inner join v_employee_mstr b on a.employee=b.employee where b.pay_type='H' and run_cymd='{0}' and a.TYPE <> 'EC';",v.Local.sDate,v.Local.sSQL)
+		
+		f.ODBC.Connection!con.opencompanyconnection
+			f.Data.DataTable.CreateFromSQL("dtLaborHrs","con",v.Local.sSQL,true)
+		f.ODBC.Connection!con.close
+		
+		f.Intrinsic.Control.If(v.DataTable.dtLaborHrs.RowCount,=,0)
+			f.Intrinsic.UI.Msgbox("No payroll records returned.  Program terminating.")
+			f.Intrinsic.Control.End
+		f.Intrinsic.Control.EndIf
+		
+		'Build dictionary to match Jet Payroll earnings codes with GSS ec's
+		f.Data.Dictionary.Create("dictEC")
+		f.Data.Dictionary.AddItem("dictEC","RT","EE001")
+		f.Data.Dictionary.AddItem("dictEC","OT","EE002")
+		f.Data.Dictionary.AddItem("dictEC","HT","EE006")
+		f.Data.Dictionary.AddItem("dictEC","EC","EE010")
+		f.Data.Dictionary.AddItem("dictEC","FUNERAL","EE011")
+		f.Data.Dictionary.AddItem("dictEC","JURY DUTY","EE012")
+		F.Data.Dictionary.SetDefaultReturn("dictEC","")
+		F.Data.DataTable.FillFromDictionary("dtLaborHrs","dictEC","TYPE","JetEC")
+		f.Data.Dictionary.Close("dictEC")
+
+		'Column headings
+		F.Intrinsic.String.Build("LEGAL ID #,PAYGROUP,KEY,EMPLOYEE NAME,LABOR VALUE,PAYITEM,HOURS,OVERRIDE RATE{0}",V.Ambient.NewLine,v.Local.sOutput)
+		
+		f.Intrinsic.Control.For(v.Local.iCnt,0,v.DataTable.dtLaborHrs.RowCount--,1)
+			f.Intrinsic.String.Build("{0}{1},{2},{3},{4},{5},{6},{7},{8}{9}",v.Local.sOutput,v.DataTable.dtLaborHrs(v.Local.iCnt).LegalID!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).PayFreq!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).EmpKey!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).Name!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).Comments_3!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).JetEC!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).Hours!FieldValTrim,v.DataTable.dtLaborHrs(v.Local.iCnt).Override!FieldValTrim,v.Ambient.NewLine,v.Local.sOutput)
+			
+			f.Intrinsic.Math.Add(v.Local.iRowNum,1,v.Local.iRowNum)
+		f.Intrinsic.Control.Next(v.Local.iCnt)
+		
+		f.Intrinsic.File.String2File(v.Local.sTargetFileName,v.Local.sOutput)
+		
+		f.Intrinsic.UI.CloseWaitDialog
+		
+		f.Intrinsic.Task.ShellExec(v.Caller.Handle,"",v.Local.sTargetFileName,"","",1)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.CreateFile.End
+
+Program.Sub.Comments.Start
+	Author: Daniel Duncan
+	Customer: Precise Graphix
+	Program Name: Jet Payroll Export
+	Date Started: 10/3/19
+	Description: Exports payroll labor hours to an Excel spreadsheet in the format needed for Jet Payroll
+	Quote: 11735-0
+	GAP: 5698
+Program.Sub.Comments.End
